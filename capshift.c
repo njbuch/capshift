@@ -6,12 +6,12 @@
 
 #include "capshift.h"
 
-#define SWVERSION "v0.1 alpha"
-#define SWRELEASEDATE "January 2015"
+#define SWVERSION "v0.2 alpha"
+#define SWRELEASEDATE "February 2018"
 
 // capshift (pCAP time SHIFT) shifts the timestamps in pcap files by the specified time
 // delta value. 
-// Written by Foeh Mannay
+// Written by Foeh Mannay & Niels Jakob Buch
 // Please refer to http://networkbodges.blogspot.com for more information about this tool.
 // This software is released under the Modified BSD license.
 
@@ -96,16 +96,16 @@ params_t *parseParams(int argc, char *argv[]){
 	return(parameters);
 }
 
-int parse_pcap(FILE *capfile, FILE *outfile, long sign, long secs, long usecs){
+int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32 usecs){
 	char 				*memblock = NULL;
 	guint32				caplen = 0;
 	int					count = 0;
 	pcaprec_hdr_t		*rechdr = NULL;
 	
 	if(sign == ADD) {
-		printf("\nParsing capfile, attempting to shift forward by %ld.%ld seconds...\n", secs, usecs);
+		printf("\nParsing capfile, attempting to shift forward by %u.%u seconds...\n", secs, usecs);
 	} else {
-		printf("\nParsing capfile, attempting to shift backward by %ld.%ld seconds...\n", secs, usecs);
+		printf("\nParsing capfile, attempting to shift backward by %u.%u seconds...\n", secs, usecs);
 	}
 	
 	// Start parsing the capture file:
@@ -154,8 +154,9 @@ int parse_pcap(FILE *capfile, FILE *outfile, long sign, long secs, long usecs){
 		}
 				
 		// Adjust timestamp as required, handling over/underflow
-		rechdr->ts_sec += (sign * secs);
+		
 		if(sign == SUBTRACT){
+			rechdr->ts_sec -= secs;
 			if (usecs > rechdr->ts_usec){
 				rechdr->ts_sec--;
 				rechdr->ts_usec += (1000000 - usecs);
@@ -163,6 +164,7 @@ int parse_pcap(FILE *capfile, FILE *outfile, long sign, long secs, long usecs){
 				rechdr->ts_usec -= usecs;
 			} 
 		} else {
+			rechdr->ts_sec += secs;
 			rechdr->ts_usec += usecs;
 			if (rechdr->ts_usec > 1000000){
 				rechdr->ts_sec++;

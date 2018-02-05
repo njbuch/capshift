@@ -1,5 +1,5 @@
 #define ADD 1
-#define SUBTRACT -1
+#define SUBTRACT 2
 
 typedef unsigned int guint32;
 typedef unsigned short guint16;
@@ -24,9 +24,9 @@ typedef struct pcaprec_hdr_s {
 typedef struct params_s {
 	char *infile;
 	char *outfile;
-	long		secs;
-	long		usecs;
-	long		sign;
+	guint32		secs;
+	guint32		usecs;
+	guint32		sign;
 } params_t;
 
 
