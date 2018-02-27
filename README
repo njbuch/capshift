@@ -45,6 +45,6 @@ CHANGE LOG
 ==========
 
 v0.1a	First working release.
-v0.2a   Bugs for larger timeshifts, and larger files fixed.
-v0.3b   Adding absolute timeshifts 
+v0.2a   Bugs for larger timeshifts, and larger files.
+v0.3b   Adding absolute timeshifts, should be backward compatible with previous invocation parameters.
 

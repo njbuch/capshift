@@ -4,9 +4,11 @@
 #include <time.h>
 
 #include "capshift.h"
+#include "debug.h"
 
 #define SWVERSION "v0.3 beta"
 #define SWRELEASEDATE "February 2018"
+#define DEBUG 0
 
 // capshift (pCAP time SHIFT) shifts the timestamps in pcap files by the specified time
 // delta value. 
@@ -27,9 +29,8 @@ params_t *parseParams(int argc, char *argv[]){
 	// Set some defaults
 	parameters->infile = NULL;
 	parameters->outfile = NULL;
-	parameters->abs = 0;
+	parameters->mode = 0;
 	parameters->sign = ADD;
-
 
 	// Look for the various flags, then store the corresponding value
 	while(i < argc){
@@ -67,27 +68,80 @@ params_t *parseParams(int argc, char *argv[]){
 
 	if ((datestring != NULL) && (timestring != NULL) && (offsetstring == NULL)) {
 		// the case of exact time AND DATE, set parameters abs, secs, usecs and sign
-		parameters->abs = 0; // Means absolate displacement
+		parameters->mode = 1; // Means absolute displacement
+
+		char *result = malloc(strlen(datestring)+1+strlen(timestring)+1); //+1 for the null-terminator
+    	//in real code you would check for errors in malloc here
+    	strcpy(result, datestring);
+    	strcat(result, " ");
+		strcat(result, timestring);
+		
+		struct tm tm;
+		time_t t;
+		strptime(result, "%d-%m-%Y %H:%M:%S", &tm);
+		tm.tm_isdst = -1;      /* Not set by strptime(); tells mktime()
+								to determine whether daylight saving time
+								is in effect */
+		t = mktime(&tm);
+		debug_print("Offset for mode 1: %d\n", (int)t);
+		parameters->usecs = 0;
+		parameters->secs = (int)t;
 
 		return(parameters);
 	}
 
 	if ((datestring != NULL) && (timestring == NULL) && (offsetstring == NULL)) {
 		// the case of exact date only (keep time-of-day), set parameters abs, secs, usecs and sign
-		parameters->abs = 0; // Means absolute
+		parameters->mode = 2; // Means absolute
+
+		char *time = " 00:00:00";
+		char *result = malloc(strlen(datestring)+strlen(time)+1); //+1 for the null-terminator
+    	//in real code you would check for errors in malloc here
+    	strcpy(result, datestring);
+    	strcat(result, time);
+		
+		struct tm tm;
+		time_t t;
+		strptime(result, "%d-%m-%Y %H:%M:%S", &tm);
+		tm.tm_isdst = -1;      /* Not set by strptime(); tells mktime()
+								to determine whether daylight saving time
+								is in effect */
+		t = mktime(&tm);
+		debug_print("DEBUG: Offset for mode 2: %d\n", (int)t);
+		parameters->usecs = 0;
+		parameters->secs = (int)t;
+
 		return(parameters);
 	}
 
 	if ((datestring == NULL) && (timestring != NULL) && (offsetstring == NULL)) {
 		// the case of exact time only, set parameters abs, secs, usecs and sign
-		parameters->abs = 0; // Means absolute
+		parameters->mode = 3; // Means absolute
+
+		char *date = " 1-1-1970 ";
+		char *result = malloc(strlen(date)+strlen(timestring)+1); //+1 for the null-terminator
+    	//in real code you would check for errors in malloc here
+    	strcpy(result, date);
+    	strcat(result, timestring);
+		
+		struct tm tm;
+		time_t t;
+		strptime(result, "%d-%m-%Y %H:%M:%S", &tm);
+		tm.tm_isdst = -1;      /* Not set by strptime(); tells mktime()
+								to determine whether daylight saving time
+								is in effect */
+		t = mktime(&tm);
+		debug_print("DEBUG: Offset for mode 3: %d\n", (int)t);
+		parameters->usecs = 0;
+		parameters->secs = (int)t;
+
 		return(parameters);
 	}
 
 	if ((datestring == NULL) && (timestring == NULL) && (offsetstring != NULL)) {
-		printf("DEBUG: A relative offset is the case...%s\n", offsetstring);
+		debug_print("DEBUG: A relative offset is the case...%s\n", offsetstring);
 		// the case of exact offset, set parameters abs, secs, usecs and sign
-		parameters->abs = 1; // Means relative
+		parameters->mode = 4; // Means relative
 		// If there is a + or - present, set the sign accordingly
 		switch(offsetstring[0]){
 			case '-':
@@ -126,18 +180,6 @@ params_t *parseParams(int argc, char *argv[]){
 		return(parameters);
 	}
 
-	char *token;
-	token = strsep(&datestring, "-");
-	int dd;
-	dd  = strtol(token,NULL,10);
-
-	token = strsep(&datestring, "-");
-	int mm;
-	mm  = strtol(token,NULL,10);
-	token = strsep(&datestring, "-");
-	int yy;
-	yy  = strtol(token,NULL,10);
-	printf("Dato er %d/%d/%d", dd, mm, yy);
 	
 	
 	
@@ -145,19 +187,13 @@ params_t *parseParams(int argc, char *argv[]){
 	return(parameters);
 }
 
-int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32 usecs){
+int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32 usecs, guint32 mode){
 	char 				*memblock = NULL;
 	guint32				caplen = 0;
 	int					count = 0;
 	pcaprec_hdr_t		*rechdr = NULL;
 	int				first_timestamp_found = 0;
-	
-	if(sign == ADD) {
-		printf("\nParsing capfile, attempting to shift forward by %u.%u seconds...\n", secs, usecs);
-	} else {
-		printf("\nParsing capfile, attempting to shift backward by %u.%u seconds...\n", secs, usecs);
-	}
-	
+		
 	// Start parsing the capture file:
 	rewind(capfile);
 	clearerr(capfile);
@@ -205,10 +241,51 @@ int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32
 				
 		// Adjust timestamp as required, handling over/underflow
 		if (first_timestamp_found == 0) {
-			printf("Nu er vi ved første RAW -> %d", (int)rechdr->ts_sec );
-			printf("Nu er vi ved første since midnigt-> %d", (int)rechdr->ts_sec % 86400 );
+			debug_print("Now seeing the first raw packet. Timestamp -> %d\n", (int)rechdr->ts_sec );
 			first_timestamp_found = 1;
+
+			switch(mode){
+				case 1: // time and day fixed
+					debug_print("Setting time and day (mode 1)\n", NULL);
+					if ((int)rechdr->ts_sec > secs) {
+						 secs = (int)rechdr->ts_sec - secs;
+						 sign = SUBTRACT;
+					} else {
+						 secs = secs - (int)rechdr->ts_sec;
+						 sign = ADD;
+					}
+					break;
+				case 2: // date only
+					debug_print("Setting date only (mode 2)\n", NULL);
+					int timeofday = (int)rechdr->ts_sec % 86400;
+					secs = secs + timeofday;
+					if ((int)rechdr->ts_sec > secs) {
+						 secs = (int)rechdr->ts_sec - secs;
+						 sign = SUBTRACT;
+					} else {
+						 secs = secs - (int)rechdr->ts_sec;
+						 sign = ADD;
+					}
+					break;
+				case 3: // time only
+					debug_print("Setting time only (mode 3)\n", NULL);
+					timeofday = (int)rechdr->ts_sec % 86400;
+					secs = (int)rechdr->ts_sec - timeofday + secs;
+					if ((int)rechdr->ts_sec > secs) {
+						 secs = (int)rechdr->ts_sec - secs;
+						 sign = SUBTRACT;
+					} else {
+						 secs = secs - (int)rechdr->ts_sec;
+						 sign = ADD;
+					}
+					break;
+				case 4: // offset
+					debug_print("Setting offset (mode 4)\n", NULL);
+					break;
+			}
+			debug_print("Time adjustment sign:%d and value:%d", sign, secs);
 		}
+
 		if(sign == SUBTRACT){
 			rechdr->ts_sec -= secs;
 			if (usecs > rechdr->ts_usec){
@@ -255,27 +332,6 @@ int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32
 	return(count);
 }
 
-int findoffset() {
-		
-	time_t curtime;
-	time_t newtime;
-	time(&curtime);
-	/* 
-	struct tm *dayoffset;	
-	dayoffset = localtime(&curtime);
-	dayoffset->tm_mday = 0;
-	dayoffset->tm_mon = 0;
-	dayoffset->tm_year = 0;
-	dayoffset->tm_wday = 0;
-	newtime = mktime(dayoffset); */
-	time_t seconds_since_midnight = curtime % 86400;
-	printf("Current time = %s", ctime(&curtime));
-	printf("Current time = %d", (int)curtime);
-	// printf("New time = %s", ctime(&newtime));
-	printf("New time = %d", (int)seconds_since_midnight);
-	return(0);
-}
-
 int main(int argc, char *argv[]){
 // The main function basically just calls other functions to do the work.
 	params_t			*parameters = NULL;
@@ -287,13 +343,13 @@ int main(int argc, char *argv[]){
 
 	if(parameters == NULL){
 		printf("\n\n                     _     _  __ _  \n"); 
- 		printf("                    | |   (_)/ _| |  \n");
-		printf("  ___ __ _ _ __  ___| |__  _| |_| |_ \n");
-		printf(" / __/ _` | '_ \\/ __| '_ \\| |  _| __|\n");
-		printf("| (_| (_| | |_) \\__ \\ | | | | | | |_ \n");
+ 		printf("                    | |   (_)/ _| |     \n");
+		printf("  ___ __ _ _ __  ___| |__  _| |_| |_    \n");
+		printf(" / __/ _` | '_ \\/ __| '_ \\| |  _| __| \n");
+		printf("| (_| (_| | |_) \\__ \\ | | | | | | |_  \n");
  		printf(" \\___\\__,_| .__/|___/_| |_|_|_|  \\__|\n");
- 		printf("         | |                        \n");
- 		printf("         |_|                        \n");
+ 		printf("         | |                            \n");
+ 		printf("         |_|                            \n");
 		printf("\ncapshift: a utility to adjust the timestamps of pcap files.\n");
 		printf("Written by Niels Jakob Buch & Foeh Mannay.\n");
 		printf("Version %s, %s\n\n", SWVERSION, SWRELEASEDATE);
@@ -302,7 +358,7 @@ int main(int argc, char *argv[]){
 		printf("Where inputcapfile is a tcpdump-style .cap file\n");
 		printf("outputcapfile is the file where the time-shifted version will be saved\n");
 		printf("[time option] is:\n");
-		printf("	-o offset 		: offset is the number of seconds to shift by (e.g. -1.5, +0.200)\n");
+		printf("	-o offset 		: offset is the number of seconds (and microseconds) to shift by (e.g. -1.5, +0.200)\n");
 		printf("	-d date 		: where date is the day shift to, keeping the time-of-day.\n");	
 		printf("	-t time 		: where time is the time-of-day to shift to, keeping the day.\n");
 		printf("	-d date -t time		: where date and time is the time AND day to shift to.\n\n\n");
@@ -322,7 +378,7 @@ int main(int argc, char *argv[]){
 		return(1);
 	}
 	
-	printf("\n%d frames processed.\n", parse_pcap(infile, outfile, parameters->sign, parameters->secs, parameters->usecs));
+	printf("\n%d frames processed.\n", parse_pcap(infile, outfile, parameters->sign, parameters->secs, parameters->usecs, parameters->mode));
 
 	fclose(infile);
 	fclose(outfile);
