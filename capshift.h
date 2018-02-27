@@ -27,6 +27,7 @@ typedef struct params_s {
 	guint32		secs;
 	guint32		usecs;
 	guint32		sign;
+        guint32         abs;    /* indicate if its a relative or absolate displacement 0=abs 1=rel */
 } params_t;
 
 

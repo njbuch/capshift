@@ -1,12 +1,11 @@
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "capshift.h"
 
-#define SWVERSION "v0.2 alpha"
+#define SWVERSION "v0.3 beta"
 #define SWRELEASEDATE "February 2018"
 
 // capshift (pCAP time SHIFT) shifts the timestamps in pcap files by the specified time
@@ -19,16 +18,18 @@ params_t *parseParams(int argc, char *argv[]){
 	// Returns a struct with various parameters or NULL if invalid
 	unsigned int i = 1;
 	char 	*timestring = NULL,
-			*endptr = NULL;
+			*endptr = NULL,
+			*datestring = NULL,
+			*offsetstring = NULL;
 	params_t *parameters = (params_t*)malloc(sizeof(params_t));
 	if(parameters == NULL) return(NULL);
-
-	// There must be 4 parameters
-	if(argc != 7) return(NULL);
 
 	// Set some defaults
 	parameters->infile = NULL;
 	parameters->outfile = NULL;
+	parameters->abs = 0;
+	parameters->sign = ADD;
+
 
 	// Look for the various flags, then store the corresponding value
 	while(i < argc){
@@ -43,6 +44,16 @@ params_t *parseParams(int argc, char *argv[]){
 			continue;
 		}
 		if(strcmp(argv[i],"-o") == 0){
+			offsetstring = argv[++i];
+			i++;
+			continue;
+		}
+		if(strcmp(argv[i],"-d") == 0){
+			datestring = argv[++i];
+			i++;
+			continue;
+		}
+		if(strcmp(argv[i],"-t") == 0){
 			timestring = argv[++i];
 			i++;
 			continue;
@@ -54,44 +65,82 @@ params_t *parseParams(int argc, char *argv[]){
 	// If the input files still aren't set, bomb
 	if((parameters->infile == NULL) || (parameters->outfile == NULL)) return(NULL);
 
-	// Try to parse the time offset string
-	if(timestring == NULL) return NULL;
-	
-	// If there is a + or - present, set the sign accordingly
-	switch(timestring[0]){
-		case '-':
-			parameters->sign = SUBTRACT;
-			timestring++;
-			break;
-		case '+':
-			parameters->sign = ADD;
-			timestring++;
-			break;
-	}
-	
-	// If there are non-numeric characters present, bail out
-	if((timestring[0] < '0') || (timestring[0] > '9')) return(NULL);
-	
-	// Grab the seconds
-	parameters->secs = strtol(timestring, &endptr, 10);
-	// Look for a decimal point, if present then grab and scale out microseconds
-	if(endptr[0] == '.'){
-		timestring = endptr + 1;
-		parameters->usecs = strtol(timestring, &endptr, 10);
+	if ((datestring != NULL) && (timestring != NULL) && (offsetstring == NULL)) {
+		// the case of exact time AND DATE, set parameters abs, secs, usecs and sign
+		parameters->abs = 0; // Means absolate displacement
 
-		// scale the usecs field as appropriate for place value
-		i = endptr - timestring;
-		while(i < 6){
-			parameters->usecs *= 10;
-			i++;
+		return(parameters);
+	}
+
+	if ((datestring != NULL) && (timestring == NULL) && (offsetstring == NULL)) {
+		// the case of exact date only (keep time-of-day), set parameters abs, secs, usecs and sign
+		parameters->abs = 0; // Means absolute
+		return(parameters);
+	}
+
+	if ((datestring == NULL) && (timestring != NULL) && (offsetstring == NULL)) {
+		// the case of exact time only, set parameters abs, secs, usecs and sign
+		parameters->abs = 0; // Means absolute
+		return(parameters);
+	}
+
+	if ((datestring == NULL) && (timestring == NULL) && (offsetstring != NULL)) {
+		printf("DEBUG: A relative offset is the case...%s\n", offsetstring);
+		// the case of exact offset, set parameters abs, secs, usecs and sign
+		parameters->abs = 1; // Means relative
+		// If there is a + or - present, set the sign accordingly
+		switch(offsetstring[0]){
+			case '-':
+				parameters->sign = SUBTRACT;
+				offsetstring++;
+				break;
+			case '+':
+				parameters->sign = ADD;
+				offsetstring++;
+				break;
 		}
-		while(i > 6){
-			parameters->usecs /= 10;
-			i--;
-		}
-	} else parameters->usecs = 0;
+		// If there are non-numeric characters present, bail out
+		if((offsetstring[0] < '0') || (offsetstring[0] > '9')) return(NULL);
+
+		// Grab the seconds
+		parameters->secs = strtol(offsetstring, &endptr, 10);
+		// Look for a decimal point, if present then grab and scale out microseconds
+		if(endptr[0] == '.'){
+			offsetstring = endptr + 1;
+			parameters->usecs = strtol(offsetstring, &endptr, 10);
+
+			// scale the usecs field as appropriate for place value
+			i = endptr - offsetstring;
+			while(i < 6){
+				parameters->usecs *= 10;
+				i++;
+			}
+			while(i > 6){
+				parameters->usecs /= 10;
+				i--;
+			}
+		} else parameters->usecs = 0;
+		
+		if(endptr[0] != '\x00') return(NULL);
+
+		return(parameters);
+	}
+
+	char *token;
+	token = strsep(&datestring, "-");
+	int dd;
+	dd  = strtol(token,NULL,10);
+
+	token = strsep(&datestring, "-");
+	int mm;
+	mm  = strtol(token,NULL,10);
+	token = strsep(&datestring, "-");
+	int yy;
+	yy  = strtol(token,NULL,10);
+	printf("Dato er %d/%d/%d", dd, mm, yy);
 	
-	if(endptr[0] != '\x00') return(NULL);
+	
+	
 
 	return(parameters);
 }
@@ -101,6 +150,7 @@ int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32
 	guint32				caplen = 0;
 	int					count = 0;
 	pcaprec_hdr_t		*rechdr = NULL;
+	int				first_timestamp_found = 0;
 	
 	if(sign == ADD) {
 		printf("\nParsing capfile, attempting to shift forward by %u.%u seconds...\n", secs, usecs);
@@ -154,7 +204,11 @@ int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32
 		}
 				
 		// Adjust timestamp as required, handling over/underflow
-		
+		if (first_timestamp_found == 0) {
+			printf("Nu er vi ved første RAW -> %d", (int)rechdr->ts_sec );
+			printf("Nu er vi ved første since midnigt-> %d", (int)rechdr->ts_sec % 86400 );
+			first_timestamp_found = 1;
+		}
 		if(sign == SUBTRACT){
 			rechdr->ts_sec -= secs;
 			if (usecs > rechdr->ts_usec){
@@ -201,6 +255,27 @@ int parse_pcap(FILE *capfile, FILE *outfile, guint32 sign, guint32 secs, guint32
 	return(count);
 }
 
+int findoffset() {
+		
+	time_t curtime;
+	time_t newtime;
+	time(&curtime);
+	/* 
+	struct tm *dayoffset;	
+	dayoffset = localtime(&curtime);
+	dayoffset->tm_mday = 0;
+	dayoffset->tm_mon = 0;
+	dayoffset->tm_year = 0;
+	dayoffset->tm_wday = 0;
+	newtime = mktime(dayoffset); */
+	time_t seconds_since_midnight = curtime % 86400;
+	printf("Current time = %s", ctime(&curtime));
+	printf("Current time = %d", (int)curtime);
+	// printf("New time = %s", ctime(&newtime));
+	printf("New time = %d", (int)seconds_since_midnight);
+	return(0);
+}
+
 int main(int argc, char *argv[]){
 // The main function basically just calls other functions to do the work.
 	params_t			*parameters = NULL;
@@ -209,14 +284,28 @@ int main(int argc, char *argv[]){
 	
 	// Parse our command line parameters and verify they are usable. If not, show help.
 	parameters = parseParams(argc, argv);
+
 	if(parameters == NULL){
-		printf("capshift: a utility to adjust the timestamps of pcap files by a fixed offset.\n");
+		printf("\n\n                     _     _  __ _  \n"); 
+ 		printf("                    | |   (_)/ _| |  \n");
+		printf("  ___ __ _ _ __  ___| |__  _| |_| |_ \n");
+		printf(" / __/ _` | '_ \\/ __| '_ \\| |  _| __|\n");
+		printf("| (_| (_| | |_) \\__ \\ | | | | | | |_ \n");
+ 		printf(" \\___\\__,_| .__/|___/_| |_|_|_|  \\__|\n");
+ 		printf("         | |                        \n");
+ 		printf("         |_|                        \n");
+		printf("\ncapshift: a utility to adjust the timestamps of pcap files.\n");
+		printf("Written by Niels Jakob Buch & Foeh Mannay.\n");
 		printf("Version %s, %s\n\n", SWVERSION, SWRELEASEDATE);
 		printf("Usage:\n");
-		printf("%s -r inputcapfile -w outputcapfile -o offset \n\n",argv[0]);
+		printf("%s -r inputcapfile -w outputcapfile [time option]\n\n",argv[0]);
 		printf("Where inputcapfile is a tcpdump-style .cap file\n");
 		printf("outputcapfile is the file where the time-shifted version will be saved\n");
-		printf("offset is the number of seconds to shift by (e.g. -1.5, +0.200)\n");
+		printf("[time option] is:\n");
+		printf("	-o offset 		: offset is the number of seconds to shift by (e.g. -1.5, +0.200)\n");
+		printf("	-d date 		: where date is the day shift to, keeping the time-of-day.\n");	
+		printf("	-t time 		: where time is the time-of-day to shift to, keeping the day.\n");
+		printf("	-d date -t time		: where date and time is the time AND day to shift to.\n\n\n");
 		return(1);
 	}
 	
@@ -240,5 +329,6 @@ int main(int argc, char *argv[]){
 	
 	return(0);
 }
+
 
 
