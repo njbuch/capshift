@@ -1,3 +1,5 @@
+#define _XOPEN_SOURCE   // This is required to compile cross-platform
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +15,6 @@
 // capshift (pCAP time SHIFT) shifts the timestamps in pcap files by the specified time
 // delta value. 
 // Written by Foeh Mannay & Niels Jakob Buch
-// Please refer to http://networkbodges.blogspot.com for more information about this tool.
 // This software is released under the Modified BSD license.
 
 params_t *parseParams(int argc, char *argv[]){
@@ -358,10 +359,10 @@ int main(int argc, char *argv[]){
 		printf("Where inputcapfile is a tcpdump-style .cap file\n");
 		printf("outputcapfile is the file where the time-shifted version will be saved\n");
 		printf("[time option] is:\n");
-		printf("	-o offset 		: offset is the number of seconds (and microseconds) to shift by (e.g. -1.5, +0.200)\n");
-		printf("	-d date 		: where date is the day shift to, keeping the time-of-day.\n");	
-		printf("	-t time 		: where time is the time-of-day to shift to, keeping the day.\n");
-		printf("	-d date -t time		: where date and time is the time AND day to shift to.\n\n\n");
+		printf(" -o offset -: offset is the number of seconds (and microseconds) to shift by (e.g. -1.5, +0.200)\n");
+		printf(" -d date -: where date is the day shift to, keeping the time-of-day.\n");	
+		printf(" -t time -: where time is the time-of-day to shift to, keeping the day.\n");
+		printf(" -d date -t time -: where date and time is the time AND day to shift to.\n\n\n");
 		return(1);
 	}
 	

@@ -46,5 +46,6 @@ CHANGE LOG
 
 v0.1a	First working release.
 v0.2a   Bugs for larger timeshifts, and larger files.
-v0.3b   Adding absolute timeshifts, should be backward compatible with previous invocation parameters.
-
+v0.3b   Adding absolute timeshifts
+        Should be backward compatible with previous invocation parameters.
+        Adding Mac OSX and Windows executables to ease quick-n-dirty users ;)
